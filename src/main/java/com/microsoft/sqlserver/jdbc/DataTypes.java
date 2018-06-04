@@ -768,6 +768,7 @@ enum JavaType
 						JDBCType.TIME,// This is needed to send nanoseconds to the driver as setTime() is only milliseconds
 						JDBCType.TIMESTAMP, // This is datetime2
 						JDBCType.DATETIME,
+						JDBCType.LEGACY_DATETIME,
 						JDBCType.SMALLDATETIME
 						));
 
@@ -858,6 +859,8 @@ enum JDBCType
     SMALLMONEY    (Category.NUMERIC,       	 microsoft.sql.Types.SMALLMONEY,        "java.math.BigDecimal"),
     TVP 		  (Category.TVP, 			 microsoft.sql.Types.STRUCTURED,		"java.lang.Object"),
     DATETIME      (Category.TIMESTAMP,       microsoft.sql.Types.DATETIME,			"java.sql.Timestamp"),
+    LEGACY_DATETIME
+                  (Category.TIMESTAMP,       microsoft.sql.Types.LEGACY_DATETIME,	"java.sql.Timestamp"),
     SMALLDATETIME (Category.TIMESTAMP,       microsoft.sql.Types.SMALLDATETIME,     "java.sql.Timestamp"),
     GUID		  (Category.CHARACTER,		 microsoft.sql.Types.GUID,				"java.lang.String"),
     SQL_VARIANT   (Category.SQL_VARIANT,     microsoft.sql.Types.SQL_VARIANT,       "java.lang.Object"),
@@ -1408,8 +1411,6 @@ enum JDBCType
     /**
      * Identify unsupported JDBC data types.
      * 
-     * @param jdbcType
-     *            the JDBC type to check
      * @return true if the type is unsupported
      */
     boolean isUnsupported() {
@@ -1598,7 +1599,7 @@ enum JDBCType
 				JDBCType.DATETIMEOFFSET,
                 EnumSet.of(
                     SSType.DATETIMEOFFSET)),
-    	
+    	//todo: this appears to be wrong and not used. JDBCType.DATETIME is mapped to SSType.DATETIME2 (note the 2)
     	DATETIME_NORMALIZED_TO (
 				JDBCType.DATETIME,
                 EnumSet.of(
