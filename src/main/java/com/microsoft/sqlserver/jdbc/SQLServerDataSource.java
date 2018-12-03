@@ -855,6 +855,29 @@ public class SQLServerDataSource
     }
 
     @Override
+    public void setConnectRetryCount(int connectRetryCount) {
+        setIntProperty(connectionProps, SQLServerDriverIntProperty.CONNECT_RETRY_COUNT.toString(), connectRetryCount);
+    }
+
+    @Override
+    public int getConnectRetryCount() {
+        return getIntProperty(connectionProps, SQLServerDriverIntProperty.CONNECT_RETRY_COUNT.toString(),
+                SQLServerDriverIntProperty.CONNECT_RETRY_COUNT.getDefaultValue());
+    }
+
+    @Override
+    public void setConnectRetryInterval(int connectRetryInterval) {
+        setIntProperty(connectionProps, SQLServerDriverIntProperty.CONNECT_RETRY_INTERVAL.toString(),
+                connectRetryInterval);
+    }
+
+    @Override
+    public int getConnectRetryInterval() {
+        return getIntProperty(connectionProps, SQLServerDriverIntProperty.CONNECT_RETRY_INTERVAL.toString(),
+                SQLServerDriverIntProperty.CONNECT_RETRY_INTERVAL.getDefaultValue());
+    }
+
+    @Override
     public void setJASSConfigurationName(String configurationName) {
         setStringProperty(connectionProps, SQLServerDriverStringProperty.JAAS_CONFIG_NAME.toString(),
                 configurationName);
@@ -1090,7 +1113,7 @@ public class SQLServerDataSource
             if (propertyName.equals(SQLServerDriverStringProperty.TRUST_STORE_PASSWORD.toString())) {
                 // The property set and the variable set at the same time is not
                 // possible
-                assert trustStorePasswordStripped == false;
+                assert !trustStorePasswordStripped;
                 ref.add(new StringRefAddr("trustStorePasswordStripped", "true"));
             } else {
                 // do not add passwords to the collection. we have normal

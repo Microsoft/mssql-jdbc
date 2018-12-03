@@ -222,7 +222,8 @@ public class SQLServerStatement implements ISQLServerStatement {
             else
                 throw e;
         } finally {
-            lastStmtExecCmd = newStmtCmd;
+            if (newStmtCmd.wasExecuted())
+                lastStmtExecCmd = newStmtCmd;
         }
     }
 
@@ -1012,29 +1013,28 @@ public class SQLServerStatement implements ISQLServerStatement {
      */
     static String replaceMarkerWithNull(String sql) {
         if (!sql.contains("'")) {
-            String retStr = replaceParameterWithString(sql, '?', "null");
-            return retStr;
+            return replaceParameterWithString(sql, '?', "null");
         } else {
             StringTokenizer st = new StringTokenizer(sql, "'", true);
             boolean beforeColon = true;
-            String retSql = "";
+            final StringBuilder retSql = new StringBuilder();
             while (st.hasMoreTokens()) {
                 String str = st.nextToken();
                 if (str.equals("'")) {
-                    retSql += "'";
+                    retSql.append("'");
                     beforeColon = !beforeColon;
                     continue;
                 }
                 if (beforeColon) {
                     String repStr = replaceParameterWithString(str, '?', "null");
-                    retSql += repStr;
+                    retSql.append(repStr);
                     continue;
                 } else {
-                    retSql += str;
+                    retSql.append(str);
                     continue;
                 }
             }
-            return retSql;
+            return retSql.toString();
         }
     }
 
@@ -1492,6 +1492,8 @@ public class SQLServerStatement implements ISQLServerStatement {
                     // The final done token in the response always marks the end of the result,
                     // even if there is no update count.
                     if (doneToken.isFinal()) {
+                        // Response is completely processed, hence decrement unprocessed response count.
+                        connection.getSessionRecovery().decrementUnprocessedResponseCount();
                         moreResults = false;
                         return false;
                     }
@@ -2412,7 +2414,7 @@ final class JDBCSyntaxTranslator {
         OFFSET,
         QUOTE,
         PROCESS
-    };
+    }
 
     // This pattern matches the LIMIT syntax with an OFFSET clause. The driver does not support OFFSET expression in the
     // LIMIT clause.

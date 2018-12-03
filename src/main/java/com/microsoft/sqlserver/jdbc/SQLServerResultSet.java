@@ -367,6 +367,10 @@ public class SQLServerResultSet implements ISQLServerResultSet, java.io.Serializ
                         // Consume the DONE packet if there is error
                         StreamDone doneToken = new StreamDone();
                         doneToken.setFromTDS(tdsReader);
+                        if (doneToken.isFinal()) {
+                            // Response is completely processed, hence decrement unprocessed response count.
+                            stmt.connection.getSessionRecovery().decrementUnprocessedResponseCount();
+                        }
                         return true;
                     }
                 }
@@ -1072,7 +1076,6 @@ public class SQLServerResultSet implements ISQLServerResultSet, java.io.Serializ
     public boolean wasNull() throws SQLServerException {
         loggerExternal.entering(getClassNameLogging(), "wasNull");
         checkClosed();
-        fillLOBs();
         loggerExternal.exiting(getClassNameLogging(), "wasNull", lastValueWasNull);
         return lastValueWasNull;
     }
@@ -5299,7 +5302,10 @@ public class SQLServerResultSet implements ISQLServerResultSet, java.io.Serializ
                 int token = tdsReader.peekTokenType();
                 StreamDone doneToken = new StreamDone();
                 doneToken.setFromTDS(tdsReader);
-
+                if (doneToken.isFinal()) {
+                    // Response is completely processed, hence decrement unprocessed response count.
+                    stmt.connection.getSessionRecovery().decrementUnprocessedResponseCount();
+                }
                 int packetType = tdsReader.peekTokenType();
                 if (-1 != packetType && TDS.TDS_DONEINPROC == token) {
                     switch (packetType) {
