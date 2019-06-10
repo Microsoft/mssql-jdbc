@@ -9,6 +9,7 @@ import static com.microsoft.sqlserver.jdbc.SQLServerConnection.getCachedParsedSQ
 import static com.microsoft.sqlserver.jdbc.SQLServerConnection.parseAndCacheSQL;
 
 import java.sql.BatchUpdateException;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLTimeoutException;
@@ -58,7 +59,7 @@ public class SQLServerStatement implements ISQLServerStatement {
     final static char LEFT_CURLY_BRACKET = 123;
     final static char RIGHT_CURLY_BRACKET = 125;
 
-    private boolean isResponseBufferingAdaptive = false;
+    boolean isResponseBufferingAdaptive = false;
 
     final boolean getIsResponseBufferingAdaptive() {
         return isResponseBufferingAdaptive;
@@ -105,7 +106,10 @@ public class SQLServerStatement implements ISQLServerStatement {
     /**
      * The input and out parameters for statement execution.
      */
-    Parameter[] inOutParam; // Parameters for prepared stmts and stored procedures
+    Parameter[] inOutParam = null; // Parameters for prepared stmts and stored procedures
+
+    /** Return parameter for stored procedure calls */
+    Parameter returnParam;
 
     /**
      * The statement's connection.
@@ -1540,6 +1544,14 @@ public class SQLServerStatement implements ISQLServerStatement {
                 else {
                     procedureRetStatToken = new StreamRetStatus();
                     procedureRetStatToken.setFromTDS(tdsReader);
+                    // only read the return value from stored procedure if we are expecting one. Also check that it is
+                    // not cursorable and not TVP type, for these two
+                    // driver is still following the old behavior of executing sp_executesql for stored procedures.
+                    if (!isCursorable(executeMethod) && !SQLServerPreparedStatement.isTVPType && null != inOutParam
+                            && inOutParam.length > 0 && inOutParam[0].isReturnValue()) {
+                        inOutParam[0].setFromReturnStatus(procedureRetStatToken.getStatus(), connection);
+                        return false;
+                    }
                 }
 
                 return true;

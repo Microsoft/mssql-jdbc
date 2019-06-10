@@ -160,7 +160,7 @@ public final class TestResource extends ListResourceBundle {
             {"R_statementShouldBeOpened", "statement should be opened since resultset is opened."},
             {"R_shouldBeWrapper", "{0} should be a wrapper for {1}."},
             {"R_shouldNotBeWrapper", "{0} should not be a wrapper for {1}."},
-            {"R_outputParamFailed", "Test for output parameter failed."},
+            {"R_outputParamFailed", "Test for output parameter %s failed."},
             {"R_inputParamFailed", "Test for input parameter failed."}, {"R_decryptionFailed", "Decryption failed"},
             {"R_expectedValue", "Expected value: "}, {"R_expectedValueAtIndex", "Expected value at index: "},
             {"R_switchFailed", "Switch case is not matched with data"},
@@ -172,6 +172,7 @@ public final class TestResource extends ListResourceBundle {
             {"R_incorrectColumnNumInsertDW",
                     "Column name or number of supplied values does not match table definition."},
             {"R_incorrectSyntaxTable", "Incorrect syntax near the keyword 'table'."},
+            {"R_WrongParameter", "{0} is not a parameter for procedure {1}."},
             {"R_incorrectSyntaxTableDW", "Incorrect syntax near 'table'."},
             {"R_ConnectionStringNull", "Connection String should not be null"},
             {"R_OperandTypeClash", "Operand type clash"}};

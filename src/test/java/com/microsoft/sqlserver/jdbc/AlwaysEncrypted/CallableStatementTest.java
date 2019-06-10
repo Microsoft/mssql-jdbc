@@ -2459,7 +2459,10 @@ public class CallableStatementTest extends AESetup {
             callableStatement.registerOutParameter(17, microsoft.sql.Types.DATETIMEOFFSET, 2);
             callableStatement.registerOutParameter(18, microsoft.sql.Types.DATETIMEOFFSET, 2);
             callableStatement.execute();
-
+            assertEquals(callableStatement.getDate(1), callableStatement.getDate(2),
+                    "Test for output parameter Date fails.\n");
+            assertEquals(callableStatement.getTimestamp(3), callableStatement.getTimestamp(4),
+                    "Test for output parameter datetime2 fails.\n");
             assertEquals(callableStatement.getDate(1), callableStatement.getDate(2),
                     TestResource.getResource("R_outputParamFailed"));
             assertEquals(callableStatement.getTimestamp(3), callableStatement.getTimestamp(4),
@@ -2467,18 +2470,18 @@ public class CallableStatementTest extends AESetup {
             assertEquals(callableStatement.getDateTimeOffset(5), callableStatement.getDateTimeOffset(6),
                     TestResource.getResource("R_outputParamFailed"));
             assertEquals(callableStatement.getTime(7), callableStatement.getTime(8),
-                    TestResource.getResource("R_outputParamFailed"));
+                    String.format(TestResource.getResource("R_outputParamFailed"), "Time"));
             assertEquals(callableStatement.getDateTime(9), // actual plain
                     callableStatement.getDateTime(10), // received expected enc
-                    TestResource.getResource("R_outputParamFailed"));
+                    String.format(TestResource.getResource("R_outputParamFailed"), "Datetime"));
             assertEquals(callableStatement.getSmallDateTime(11), callableStatement.getSmallDateTime(12),
-                    TestResource.getResource("R_outputParamFailed"));
+                    String.format(TestResource.getResource("R_outputParamFailed"), "smallDateTime"));
             assertEquals(callableStatement.getTimestamp(13), callableStatement.getTimestamp(14),
-                    TestResource.getResource("R_outputParamFailed"));
+                    String.format(TestResource.getResource("R_outputParamFailed"), "datetime2"));
             assertEquals(callableStatement.getTime(15).getTime(), callableStatement.getTime(16).getTime(),
-                    TestResource.getResource("R_outputParamFailed"));
+                    String.format(TestResource.getResource("R_outputParamFailed"), "time"));
             assertEquals(callableStatement.getDateTimeOffset(17), callableStatement.getDateTimeOffset(18),
-                    TestResource.getResource("R_outputParamFailed"));
+                    String.format(TestResource.getResource("R_outputParamFailed"), "DatetimeOffset"));
 
         } catch (Exception e) {
             fail(e.getMessage());

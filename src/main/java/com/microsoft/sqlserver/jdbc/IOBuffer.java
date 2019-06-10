@@ -6385,7 +6385,7 @@ final class TDSReader implements Serializable {
         payloadOffset = 0;
         return true;
     }
-
+ 
     /**
      * Reads the next packet of the TDS channel.
      *
