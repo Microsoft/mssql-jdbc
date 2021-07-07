@@ -23,6 +23,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
 import java.net.SocketException;
+import java.net.SocketOption;
 import java.net.SocketTimeoutException;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
@@ -72,6 +73,75 @@ import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 
 import com.microsoft.sqlserver.jdbc.dataclassification.SensitivityClassification;
+
+
+final class ExtendedSocketOptions {
+    private static class ExtSocketOption<T> implements SocketOption<T> {
+        private final String name;
+        private final Class<T> type;
+
+        ExtSocketOption(String name, Class<T> type) {
+            this.name = name;
+            this.type = type;
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public Class<T> type() {
+            return type;
+        }
+
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    private ExtendedSocketOptions() {}
+
+    /**
+     * Keep-Alive idle time.
+     *
+     * <p>
+     * The value of this socket option is an {@code Integer} that is the number of seconds of idle time before
+     * keep-alive initiates a probe. The socket option is specific to stream-oriented sockets using the TCP/IP protocol.
+     * The exact semantics of this socket option are system dependent.
+     *
+     * <p>
+     * When the {@link java.net.StandardSocketOptions#SO_KEEPALIVE SO_KEEPALIVE} option is enabled, TCP probes a
+     * connection that has been idle for some amount of time. The default value for this idle period is system
+     * dependent, but is typically 2 hours. The {@code TCP_KEEPIDLE} option can be used to affect this value for a given
+     * socket.
+     *
+     * @since 11
+     */
+    public static final SocketOption<Integer> TCP_KEEPIDLE = new ExtSocketOption<Integer>("TCP_KEEPIDLE",
+            Integer.class);
+
+    /**
+     * Keep-Alive retransmission interval time.
+     *
+     * <p>
+     * The value of this socket option is an {@code Integer} that is the number of seconds to wait before retransmitting
+     * a keep-alive probe. The socket option is specific to stream-oriented sockets using the TCP/IP protocol. The exact
+     * semantics of this socket option are system dependent.
+     *
+     * <p>
+     * When the {@link java.net.StandardSocketOptions#SO_KEEPALIVE SO_KEEPALIVE} option is enabled, TCP probes a
+     * connection that has been idle for some amount of time. If the remote system does not respond to a keep-alive
+     * probe, TCP retransmits the probe after some amount of time. The default value for this retransmission interval is
+     * system dependent, but is typically 75 seconds. The {@code TCP_KEEPINTERVAL} option can be used to affect this
+     * value for a given socket.
+     *
+     * @since 11
+     */
+    public static final SocketOption<Integer> TCP_KEEPINTERVAL = new ExtSocketOption<Integer>("TCP_KEEPINTERVAL",
+            Integer.class);
+}
 
 
 final class TDS {
@@ -570,6 +640,17 @@ final class TDSChannel implements Serializable {
 
     private static final Logger logger = Logger.getLogger("com.microsoft.sqlserver.jdbc.internals.TDS.Channel");
 
+    private static boolean supportJDBC43 = true;
+
+    static {
+        supportJDBC43 = DriverJDBCVersion.checkSupportsJDBC43();
+        if (!supportJDBC43) { // Socket.supportedOptions() is Java 9+
+            if (logger.isLoggable(Level.FINER)) {
+                logger.finer("Socket.supportedOptions() not found. Extended KeepAlive options will not be set.");
+            }
+        }
+    }
+
     final Logger getLogger() {
         return logger;
     }
@@ -611,14 +692,14 @@ final class TDSChannel implements Serializable {
     ProxySocket proxySocket = null;
 
     // I/O streams for raw TCP/IP communications with SQL Server
-    private InputStream tcpInputStream;
+    private ProxyInputStream tcpInputStream;
     private OutputStream tcpOutputStream;
 
     // I/O streams providing the communications interface to the driver.
     // For SSL-encrypted connections, these are streams obtained from
     // the SSL socket above. They wrap the underlying TCP streams.
     // For unencrypted connections, they are just the TCP streams themselves.
-    private InputStream inputStream;
+    private ProxyInputStream inputStream;
     private OutputStream outputStream;
 
     /** TDS packet payload logger */
@@ -680,12 +761,26 @@ final class TDSChannel implements Serializable {
             // Set socket options
             tcpSocket.setTcpNoDelay(true);
             tcpSocket.setKeepAlive(true);
+            // check if JDBC 4.3+
+            if (supportJDBC43) {
+                Set<SocketOption<?>> options = tcpSocket.supportedOptions();
+                if (options.contains(ExtendedSocketOptions.TCP_KEEPIDLE)
+                        && options.contains(ExtendedSocketOptions.TCP_KEEPINTERVAL)) {
+                    if (logger.isLoggable(Level.FINER))
+                        logger.finer(this.toString() + ": Setting KeepAlive extended socket options.");
+                    tcpSocket.setOption(ExtendedSocketOptions.TCP_KEEPIDLE, 30); // 30 seconds
+                    tcpSocket.setOption(ExtendedSocketOptions.TCP_KEEPINTERVAL, 1); // 1 second
+                } else if (logger.isLoggable(Level.FINER)) {
+                    logger.finer(
+                            this.toString() + ": KeepAlive extended socket options not supported on this platform.");
+                }
+            }
 
             // set SO_TIMEOUT
             int socketTimeout = con.getSocketTimeoutMilliseconds();
             tcpSocket.setSoTimeout(socketTimeout);
 
-            inputStream = tcpInputStream = tcpSocket.getInputStream();
+            inputStream = tcpInputStream = new ProxyInputStream(tcpSocket.getInputStream());
             outputStream = tcpOutputStream = tcpSocket.getOutputStream();
         } catch (IOException ex) {
             SQLServerException.ConvertConnectExceptionToSQLServerException(host, port, con, ex);
@@ -963,6 +1058,16 @@ final class TDSChannel implements Serializable {
     private final class ProxyInputStream extends InputStream {
         private InputStream filteredStream;
 
+        /**
+         * Bytes that have been read by a poll(s).
+         */
+        private int cachedBytes[] = new int[10];;
+
+        /**
+         * How many bytes have been cached.
+         */
+        private int cachedLength = 0;
+
         ProxyInputStream(InputStream is) {
             filteredStream = is;
         }
@@ -971,22 +1076,71 @@ final class TDSChannel implements Serializable {
             filteredStream = is;
         }
 
+        /**
+         * Poll the stream to verify connectivity.
+         * 
+         * @return true if the stream is readable.
+         * @throws IOException
+         *         If an I/O exception occurs.
+         */
+        public synchronized boolean poll() throws IOException {
+            synchronized (this) {
+                int b = filteredStream.read();
+
+                // if we got here, a byte was read and we need to save it
+
+                // Increase the size of the cache, if needed (should be very rare).
+                if (cachedBytes.length <= cachedLength) {
+                    int temp[] = new int[cachedBytes.length + 10];
+                    for (int i = 0; i < cachedBytes.length; i++) {
+                        temp[i] = cachedBytes[i];
+                    }
+
+                    cachedBytes = temp;
+                }
+
+                cachedBytes[cachedLength] = b;
+                cachedLength++;
+
+                return true;
+            }
+        }
+
+        private int getOneFromCache() {
+            int result = cachedBytes[0];
+            for (int i = 0; i < cachedLength; i++) {
+                cachedBytes[i] = cachedBytes[i + 1];
+            }
+            cachedLength--;
+
+            return result;
+        }
+
         public long skip(long n) throws IOException {
-            long bytesSkipped;
+            synchronized (this) {
+                long bytesSkipped = 0;
 
-            if (logger.isLoggable(Level.FINEST))
-                logger.finest(toString() + " Skipping " + n + " bytes");
+                if (logger.isLoggable(Level.FINEST))
+                    logger.finest(toString() + " Skipping " + n + " bytes");
 
-            bytesSkipped = filteredStream.skip(n);
+                while (cachedLength > 0 && bytesSkipped < n) {
+                    bytesSkipped++;
+                    getOneFromCache();
+                }
 
-            if (logger.isLoggable(Level.FINEST))
-                logger.finest(toString() + " Skipped " + n + " bytes");
+                if (bytesSkipped < n) {
+                    bytesSkipped += filteredStream.skip(n - bytesSkipped);
+                }
 
-            return bytesSkipped;
+                if (logger.isLoggable(Level.FINEST))
+                    logger.finest(toString() + " Skipped " + n + " bytes");
+
+                return bytesSkipped;
+            }
         }
 
         public int available() throws IOException {
-            int bytesAvailable = filteredStream.available();
+            int bytesAvailable = filteredStream.available() + cachedLength;
 
             if (logger.isLoggable(Level.FINEST))
                 logger.finest(toString() + " " + bytesAvailable + " bytes available");
@@ -1009,30 +1163,60 @@ final class TDSChannel implements Serializable {
             return readInternal(b, 0, b.length);
         }
 
-        public int read(byte b[], int offset, int maxBytes) throws IOException {
+        public int read(byte[] b, int offset, int maxBytes) throws IOException {
             return readInternal(b, offset, maxBytes);
         }
 
-        private int readInternal(byte b[], int offset, int maxBytes) throws IOException {
-            int bytesRead;
+        private int readInternal(byte[] b, int offset, int maxBytes) throws IOException {
+            synchronized (this) {
+                int bytesRead;
 
-            if (logger.isLoggable(Level.FINEST))
-                logger.finest(toString() + " Reading " + maxBytes + " bytes");
+                if (logger.isLoggable(Level.FINEST))
+                    logger.finest(toString() + " Reading " + maxBytes + " bytes");
 
-            try {
-                bytesRead = filteredStream.read(b, offset, maxBytes);
-            } catch (IOException e) {
-                if (logger.isLoggable(Level.FINER))
-                    logger.finer(toString() + " " + e.getMessage());
+                // Optimize for nothing cached
+                if (cachedLength == 0) {
+                    try {
+                        bytesRead = filteredStream.read(b, offset, maxBytes);
+                    } catch (IOException e) {
+                        if (logger.isLoggable(Level.FINER))
+                            logger.finer(toString() + " " + e.getMessage());
 
-                logger.finer(toString() + " Reading bytes threw exception:" + e.getMessage());
-                throw e;
+                        logger.finer(toString() + " Reading bytes threw exception:" + e.getMessage());
+                        throw e;
+                    }
+                } else {
+                    int offsetBytesToSkipInCache = Math.min(offset, cachedLength);
+                    for (int i = 0; i < offsetBytesToSkipInCache; i++) {
+                        getOneFromCache();
+                    }
+
+                    byte[] bytesFromCache = new byte[Math.min(maxBytes, cachedLength)];
+                    for (int i = 0; i < bytesFromCache.length; i++) {
+                        bytesFromCache[i] = (byte) getOneFromCache();
+                    }
+
+                    try {
+                        byte[] bytesFromStream = new byte[maxBytes - bytesFromCache.length];
+                        int bytesReadFromStream = filteredStream.read(bytesFromStream,
+                                offset - offsetBytesToSkipInCache, maxBytes - bytesFromCache.length);
+                        bytesRead = bytesFromCache.length + bytesReadFromStream;
+                        System.arraycopy(bytesFromCache, 0, b, 0, bytesFromCache.length);
+                        System.arraycopy(bytesFromStream, 0, b, bytesFromCache.length, bytesReadFromStream);
+                    } catch (IOException e) {
+                        if (logger.isLoggable(Level.FINER))
+                            logger.finer(toString() + " " + e.getMessage());
+
+                        logger.finer(toString() + " Reading bytes threw exception:" + e.getMessage());
+                        throw e;
+                    }
+                }
+
+                if (logger.isLoggable(Level.FINEST))
+                    logger.finest(toString() + " Read " + bytesRead + " bytes");
+
+                return bytesRead;
             }
-
-            if (logger.isLoggable(Level.FINEST))
-                logger.finest(toString() + " Read " + bytesRead + " bytes");
-
-            return bytesRead;
         }
 
         public boolean markSupported() {
@@ -1045,17 +1229,21 @@ final class TDSChannel implements Serializable {
         }
 
         public void mark(int readLimit) {
-            if (logger.isLoggable(Level.FINEST))
-                logger.finest(toString() + " Marking next " + readLimit + " bytes");
+            synchronized (this) {
+                if (logger.isLoggable(Level.FINEST))
+                    logger.finest(toString() + " Marking next " + readLimit + " bytes");
 
-            filteredStream.mark(readLimit);
+                filteredStream.mark(readLimit);
+            }
         }
 
         public void reset() throws IOException {
-            if (logger.isLoggable(Level.FINEST))
-                logger.finest(toString() + " Resetting to previous mark");
+            synchronized (this) {
+                if (logger.isLoggable(Level.FINEST))
+                    logger.finest(toString() + " Resetting to previous mark");
 
-            filteredStream.reset();
+                filteredStream.reset();
+            }
         }
 
         public void close() throws IOException {
@@ -1834,7 +2022,7 @@ final class TDSChannel implements Serializable {
             if (logger.isLoggable(Level.FINEST))
                 logger.finest(toString() + " Getting SSL InputStream");
 
-            inputStream = sslSocket.getInputStream();
+            inputStream = new ProxyInputStream(sslSocket.getInputStream());
 
             if (logger.isLoggable(Level.FINEST))
                 logger.finest(toString() + " Getting SSL OutputStream");
@@ -2053,9 +2241,60 @@ final class TDSChannel implements Serializable {
         return is;
     }
 
+    final Boolean networkSocketStillConnected() throws SQLServerException {
+        int origSoTimeout = 50;
+        synchronized (inputStream) {
+            synchronized (outputStream) {
+                try {
+                    origSoTimeout = channelSocket.getSoTimeout();
+                } catch (SocketException e) {
+                    if (logger.isLoggable(Level.FINE)) {
+                        logger.fine(toString() + " proxySocket.getSoTimeout() failed. Unable to poll connection:"
+                                + e.getMessage());
+                    }
+                    return false;
+                }
+
+                try {
+                    channelSocket.setSoTimeout(1);
+                    inputStream.poll();
+                    channelSocket.setSoTimeout(origSoTimeout);
+                } catch (SocketTimeoutException e) {
+                    // Not a disconnected socket, so we're good to go
+                    try {
+                        channelSocket.setSoTimeout(origSoTimeout);
+                    } catch (SocketException se) {
+                        if (logger.isLoggable(Level.FINE)) {
+                            logger.fine(toString() + " getSoTimeout failed:" + se.getMessage());
+                        }
+                        return false;
+                    }
+                    return true;
+                } catch (IOException e) {
+                    if (logger.isLoggable(Level.FINE)) {
+                        logger.fine(toString() + " read failed:" + e.getMessage());
+                    }
+                    try {
+                        channelSocket.setSoTimeout(origSoTimeout);
+                    } catch (SocketException se) {
+                        if (logger.isLoggable(Level.FINE)) {
+                            logger.fine(toString() + " getSoTimeout failed:" + se.getMessage());
+                        }
+                    }
+                    return false;
+                }
+            }
+        }
+        // Server responded in 1ms, so not disconnected
+        return true;
+    }
+
     final int read(byte[] data, int offset, int length) throws SQLServerException {
         try {
-            return inputStream.read(data, offset, length);
+            synchronized (inputStream) {
+                con.idleNetworkTracker.markNetworkActivity();
+                return inputStream.read(data, offset, length);
+            }
         } catch (IOException e) {
             if (logger.isLoggable(Level.FINE))
                 logger.fine(toString() + " read failed:" + e.getMessage());
@@ -2072,7 +2311,10 @@ final class TDSChannel implements Serializable {
 
     final void write(byte[] data, int offset, int length) throws SQLServerException {
         try {
-            outputStream.write(data, offset, length);
+            synchronized (outputStream) {
+                con.idleNetworkTracker.markNetworkActivity();
+                outputStream.write(data, offset, length);
+            }
         } catch (IOException e) {
             if (logger.isLoggable(Level.FINER))
                 logger.finer(toString() + " write failed:" + e.getMessage());
@@ -2083,6 +2325,7 @@ final class TDSChannel implements Serializable {
 
     final void flush() throws SQLServerException {
         try {
+            con.idleNetworkTracker.markNetworkActivity();
             outputStream.flush();
         } catch (IOException e) {
             if (logger.isLoggable(Level.FINER))

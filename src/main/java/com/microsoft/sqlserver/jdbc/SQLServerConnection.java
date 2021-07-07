@@ -28,6 +28,7 @@ import java.sql.SQLXML;
 import java.sql.Savepoint;
 import java.sql.Statement;
 import java.text.MessageFormat;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Enumeration;
@@ -375,6 +376,31 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
             handleRefCount.decrementAndGet();
         }
     }
+
+    /**
+     * Keeps track of the last network activity in order to tell if the connection has been idle.
+     */
+    class IdleNetworkTracker {
+        private Instant lastNetworkActivity = Instant.now();
+        private int maxIdleMillis = 30000;
+
+        /** Has it been more than maxIdleMillis since network activity has been marked */
+        public boolean isIdle() {
+            return Instant.now().minusMillis(maxIdleMillis).isAfter(lastNetworkActivity);
+        }
+
+        /** Mark network activity now */
+        public void markNetworkActivity() {
+            lastNetworkActivity = Instant.now();
+        }
+
+        /** Set max idle time in milliseconds */
+        public void setMaxIdleMillis(int millis) {
+            maxIdleMillis = millis;
+        }
+    }
+
+    IdleNetworkTracker idleNetworkTracker = new IdleNetworkTracker();
 
     /** Size of the parsed SQL-text metadata cache */
     static final private int PARSED_SQL_CACHE_SIZE = 100;
@@ -1382,6 +1408,37 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
         if (isSessionUnAvailable()) {
             SQLServerException.makeFromDriverError(null, null, SQLServerException.getErrString("R_connectionIsClosed"),
                     SQLServerException.EXCEPTION_XOPEN_CONNECTION_FAILURE, false);
+        }
+    }
+
+    /**
+     * Tries to detect if the network has been disconnected and reconnects.
+     * 
+     * @throws SQLServerException
+     */
+    void checkNetworkDisconnectAndReconnect() throws SQLServerException {
+        // networkSocketStillConnected would affect perf if called every time. Only run
+        // when the connection has not seen recent activity.
+        if (!idleNetworkTracker.isIdle()) {
+            return;
+        }
+        // Only one thread should ever try to perform an idle reconnect on a
+        // disconnected connection at a time.
+        synchronized (this) {
+            // check again if connection is reset already.
+            if (!idleNetworkTracker.isIdle()) {
+                return;
+            }
+
+            if (isSessionUnAvailable()) {
+                SQLServerException.makeFromDriverError(null, null,
+                        SQLServerException.getErrString("R_connectionIsClosed"),
+                        SQLServerException.EXCEPTION_XOPEN_CONNECTION_FAILURE, false);
+            }
+            if (!tdsChannel.networkSocketStillConnected()) {
+                // TODO idle reconnect
+                idleNetworkTracker.markNetworkActivity();
+            }
         }
     }
 

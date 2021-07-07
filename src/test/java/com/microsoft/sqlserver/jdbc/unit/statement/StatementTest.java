@@ -591,13 +591,13 @@ public class StatementTest extends AbstractTest {
         }
 
         /**
-         * Test various scenarios for cancelling CallableStatement execution between first availability of the results
+         * Test various scenarios for canceling CallableStatement execution between first availability of the results
          * and handling of the last OUT parameter
          */
         @Test
         public void testCancelGetOutParams() throws Exception {
             // Use small packet size to force OUT params to span multiple packets
-            // so that cancelling execution from the same thread will work.
+            // so that canceling execution from the same thread will work.
             final String procName = RandomUtil.getIdentifier("p1");
             try (Connection con = PrepUtil.getConnection(connectionString + ";packetSize=512");
                     Statement stmt = con.createStatement()) {
@@ -636,7 +636,7 @@ public class StatementTest extends AbstractTest {
                     cstmt.getString(1);
                     cstmt.cancel();
 
-                    // Reexecute to prove CS is still good after last cancel
+                    // Re-execute to prove CS is still good after last cancel
                     cstmt.execute();
                 }
                 TestUtils.dropProcedureIfExists(AbstractSQLGenerator.escapeIdentifier(procName), stmt);
@@ -646,14 +646,14 @@ public class StatementTest extends AbstractTest {
         static final int RUN_TIME_MILLIS = 10000;
 
         /**
-         * Test that tries to flush out cancellation synchronization issues by repeatedly executing and cancelling
+         * Test that tries to flush out cancellation synchronization issues by repeatedly executing and canceling
          * statements on multiple threads.
          *
          * Typical expected failures would be liveness issues (which would manifest as a test being non-responsive),
          * incorrect results, or TDS corruption problems.
          *
          * A set of thread pairs runs for 10 seconds. Each pair has one thread repeatedly executing a SELECT statement
-         * and one thread repeatedly cancelling execution of that statement. Nothing is done to validate whether any
+         * and one thread repeatedly canceling execution of that statement. Nothing is done to validate whether any
          * particular call to cancel had any affect on the statement. Liveness issues typically would manifest as a no
          * response in this test.
          *
@@ -774,7 +774,7 @@ public class StatementTest extends AbstractTest {
             final Hammer[] hammers = new Hammer[] {
                     // Execution and cancel intervals in milliseconds
                     //
-                    // Aguments are:
+                    // Arguments are:
                     // (hammer ID, execute interval, cancel interval)
                     new Hammer(4, 120, 180), new Hammer(3, 60, 184), new Hammer(2, 30, 150), new Hammer(1, 10, 50)};
 
@@ -819,9 +819,9 @@ public class StatementTest extends AbstractTest {
             assertEquals(true, 0 != numExecuteSuccesses, "No execution successes");
             assertEquals(true, 0 != numCancelSuccesses, "No cancels succeeded");
             assertEquals(true, 0 != numCancellations, "No executions cancelled");
-            assertEquals(numExecuteExceptions, 0, "Test had execution exceptions");
-            assertEquals(numCancelExceptions, 0, "Test had cancel exceptions");
-            assertEquals(numCloseExceptions, 0, "Test had close exceptions");
+            assertEquals(0, numExecuteExceptions, "Test had execution exceptions");
+            assertEquals(0, numCancelExceptions, "Test had cancel exceptions");
+            assertEquals(0, numCloseExceptions, "Test had close exceptions");
         }
 
         @Test
